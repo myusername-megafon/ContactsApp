@@ -1,3 +1,6 @@
 <resources>
-    <string name="app_name">ContactsApp</string>
+    <string name="app_name">Контакты</string>
+    <string name="deduplicate_button">Удалить все дупликаты контактов</string>
+    <string name="unknown_name">Неизвестно</string>
+    <string name="contacts_permission">Запросить разрешение на чтение контактов</string>
 </resources>
