@@ -3,4 +3,7 @@
     <string name="deduplicate_button">Удалить все дупликаты контактов</string>
     <string name="unknown_name">Неизвестно</string>
     <string name="contacts_permission">Запросить разрешение на чтение контактов</string>
+    <string name="deleted">Дубликаты контактов успешно удалены</string>
+    <string name="not_duplicates">Дубликаты контактов отсутствуют</string>
+    <string name="not_deleted">Дубликаты не удалены</string>
 </resources>

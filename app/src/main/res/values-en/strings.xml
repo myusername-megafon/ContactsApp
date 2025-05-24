@@ -1,2 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources></resources>
+<resources>
+    <string name="app_name">Contacts</string>
+    <string name="deduplicate_button">Remove all duplicate contacts</string>
+    <string name="unknown_name">Unknown</string>
+    <string name="contacts_permission">Request contacts permission</string>
+    <string name="deleted">Duplicate contacts successfully removed</string>
+    <string name="not_duplicates">No duplicate contacts found</string>
+    <string name="not_deleted">Failed to remove duplicates</string>
+</resources>

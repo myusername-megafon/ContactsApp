@@ -6,6 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -65,12 +66,12 @@ fun MainScreen() {
                 }
             }
 
-            viewModel.state.value.permissionGranted-> {
+            viewModel.state.value.permissionGranted -> {
                 MainScreenContent(
                     state = viewModel.state.value,
                     onButtonClick = { viewModel.bindService(context) },
-                    getGroupedContacts = {contacts ->  viewModel.getGroupedContactsList(contacts)},
-                    loadContacts = {viewModel.loadContacts(context)}
+                    getGroupedContacts = { contacts -> viewModel.getGroupedContactsList(contacts) },
+                    loadContacts = { viewModel.loadContacts(context) }
                 )
             }
 
@@ -80,8 +81,10 @@ fun MainScreen() {
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Button(onClick = { launcher.launch(Manifest.permission.READ_CONTACTS)
-                    launcher.launch(Manifest.permission.WRITE_CONTACTS)}) {
+                    Button(onClick = {
+                        launcher.launch(Manifest.permission.READ_CONTACTS)
+                        launcher.launch(Manifest.permission.WRITE_CONTACTS)
+                    }) {
                         Text(text = stringResource(R.string.contacts_permission))
                     }
                 }
@@ -106,23 +109,33 @@ fun MainScreenContent(
         LazyColumn(
             modifier = Modifier.weight(1f)
         ) {
-            getGroupedContacts(state.contactsList).forEach{(letter, contacts) ->
-                item{HorizontalDivider(modifier = Modifier.fillMaxWidth())}
-                item{Text(text = letter.toString())}
-                item{HorizontalDivider(modifier = Modifier.fillMaxWidth())}
+            getGroupedContacts(state.contactsList).forEach { (letter, contacts) ->
+                item { HorizontalDivider(modifier = Modifier.fillMaxWidth()) }
+                item { Box(modifier = Modifier.padding(start = 16.dp)) { Text(text = letter.toString()) } }
+                item { HorizontalDivider(modifier = Modifier.fillMaxWidth()) }
 
-                items(contacts){ ContactItem(it) }
+                items(contacts) { ContactItem(it) }
             }
 
         }
         val context = LocalContext.current
 
-        if(state.cleanupStatus == CleanedStatusModel.SUCCESS){
-            Text("Дупликаты успешно очищены")
-            loadContacts(context)
-        }
-        if(state.cleanupStatus == CleanedStatusModel.NO_DUPLICATES){
-            Text("Дупликатов нет")
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            when {
+                state.cleanupStatus == CleanedStatusModel.SUCCESS -> {
+                    Text(stringResource(R.string.deleted))
+                    loadContacts(context)
+                }
+
+                state.cleanupStatus == CleanedStatusModel.NO_DUPLICATES -> {
+                    Text(stringResource(R.string.not_duplicates))
+                }
+
+                state.cleanupStatus == CleanedStatusModel.ERROR -> Text(stringResource(R.string.not_deleted))
+            }
         }
         Button(
             onClick = { onButtonClick(context) },
