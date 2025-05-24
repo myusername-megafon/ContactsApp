@@ -118,8 +118,8 @@ fun MainScreenContent(
         val context = LocalContext.current
 
         if(state.cleanupStatus == CleanedStatusModel.SUCCESS){
-            loadContacts(context)
             Text("Дупликаты успешно очищены")
+            loadContacts(context)
         }
         if(state.cleanupStatus == CleanedStatusModel.NO_DUPLICATES){
             Text("Дупликатов нет")

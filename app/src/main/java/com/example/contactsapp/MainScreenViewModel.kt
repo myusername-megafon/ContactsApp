@@ -9,7 +9,6 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.IBinder
 import android.provider.ContactsContract
-import android.util.Log
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
@@ -22,13 +21,12 @@ import kotlinx.coroutines.withContext
 class MainScreenViewModel : ViewModel() {
 
     private val _state = mutableStateOf(MainScreenState())
-    val state: State<MainScreenState> = _state
+    val state: State<MainScreenState> get() = _state
 
     private var isBound = false
     private var cleanupService: IContactCleanupService? = null
 
     fun checkPermissionAndLoadContacts(context: Context) {
-        _state.value = _state.value.copy(isLoading = true)
 
         val hasRead = ContextCompat.checkSelfPermission(
             context, Manifest.permission.READ_CONTACTS
@@ -38,12 +36,9 @@ class MainScreenViewModel : ViewModel() {
             context, Manifest.permission.WRITE_CONTACTS
         ) == PackageManager.PERMISSION_GRANTED
 
-        _state.value = _state.value.copy(
-            permissionGranted = hasRead && hasWrite,
-            isLoading = false
-        )
-
+        _state.value = _state.value.copy(permissionGranted = hasRead && hasWrite)
         if (hasRead && hasWrite) loadContacts(context)
+        _state.value = _state.value.copy(isLoading = false)
     }
 
     fun updatePermission(granted: Boolean) {
@@ -58,7 +53,7 @@ class MainScreenViewModel : ViewModel() {
                 }
                 _state.value = _state.value.copy(contactsList = contacts)
             } catch (e: Exception) {
-                Log.e("MainScreenViewModel", "Ошибка загрузки контактов", e)
+                _state.value = _state.value.copy(cleanupStatus = CleanedStatusModel.ERROR)
             }
         }
     }
@@ -117,49 +112,51 @@ class MainScreenViewModel : ViewModel() {
         return phones
     }
 
+
     fun bindService(context: Context) {
         val intent = Intent(context, ContactCleanupService::class.java)
-        val bound = context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
+        context.startService(intent)
+        context.bindService(intent, connection, Context.BIND_AUTO_CREATE)
     }
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
             cleanupService = IContactCleanupService.Stub.asInterface(service)
             isBound = true
+
             viewModelScope.launch {
                 runCleanup()
             }
         }
 
-        override fun onServiceDisconnected(className: ComponentName) {
+        override fun onServiceDisconnected(arg0: ComponentName) {
             cleanupService = null
             isBound = false
         }
     }
 
     suspend fun runCleanup() {
+        if (!isBound || cleanupService == null) {
+            _state.value = _state.value.copy(cleanupStatus = CleanedStatusModel.ERROR)
+            return
+        }
+
         try {
-            withContext(Dispatchers.IO) {
-                val result = cleanupService?.cleanupDuplicateContacts() ?: 1
-                Log.e("cleaN", result.toString())
-                val status = when (result) {
-                    0 -> CleanedStatusModel.SUCCESS
-                    2 -> CleanedStatusModel.NO_DUPLICATES
-                    else -> CleanedStatusModel.ERROR
-                }
-                _state.value = _state.value.copy(cleanupStatus = status)
+            val result = withContext(Dispatchers.IO) {
+                cleanupService!!.cleanupDuplicateContacts()
             }
+            val status = when (result) {
+                0 -> CleanedStatusModel.SUCCESS
+                2 -> CleanedStatusModel.NO_DUPLICATES
+                else -> CleanedStatusModel.ERROR
+            }
+            _state.value = _state.value.copy(cleanupStatus = status)
         } catch (e: Exception) {
-            Log.e("MainScreenViewModel", "Ошибка очистки", e)
             _state.value = _state.value.copy(cleanupStatus = CleanedStatusModel.ERROR)
         }
     }
 
     fun getGroupedContactsList(contacts: List<Contact>): Map<Char, List<Contact>> {
         return contacts.sortedBy { it.name }.groupBy { it.name.first().uppercaseChar() }
-    }
-
-    fun resetCleanupStatus() {
-        _state.value = _state.value.copy(cleanupStatus = null)
     }
 }
