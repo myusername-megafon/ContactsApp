@@ -5,172 +5,936 @@ import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.contactsapp.CleanedStatusModel
+import coil.compose.AsyncImage
 import com.example.contactsapp.Contact
-import com.example.contactsapp.MainScreenState
-import com.example.contactsapp.MainScreenViewModel
 import com.example.contactsapp.R
+import com.example.contactsapp.compose.components.SearchBar
+import com.example.contactsapp.compose.components.BiometricAuthDialog
+import com.example.contactsapp.compose.components.EditContactDialog
+import com.example.contactsapp.compose.components.AddNoteDialog
+import com.example.contactsapp.compose.components.AddTagDialog
+import com.example.contactsapp.compose.components.AddReminderDialog
+import com.example.contactsapp.viewmodel.MainScreenViewModel
+import com.example.contactsapp.data.model.ReminderType
+import com.example.contactsapp.data.model.Reminder
+import java.text.SimpleDateFormat
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.first
 
 @Composable
-fun MainScreen() {
+fun MainScreen(
+    viewModel: MainScreenViewModel,
+    modifier: Modifier = Modifier
+) {
     val context = LocalContext.current
-    val viewModel = viewModel<MainScreenViewModel>()
+    val uiState by viewModel.state.collectAsState()
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         viewModel.updatePermission(isGranted)
-        if (isGranted) {
-            viewModel.loadContacts(context)
-        }
     }
 
-    LaunchedEffect(Unit) {
-        viewModel.checkPermissionAndLoadContacts(context)
-    }
-
-    Column(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize()) {
         when {
-            viewModel.state.value.isLoading -> {
-                Column(
+            uiState.isLoading -> {
+                Box(
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     CircularProgressIndicator()
-                }
-            }
-
-            viewModel.state.value.permissionGranted -> {
-                MainScreenContent(
-                    state = viewModel.state.value,
-                    onButtonClick = { viewModel.bindService(context) },
-                    getGroupedContacts = { contacts -> viewModel.getGroupedContactsList(contacts) },
-                    loadContacts = { viewModel.loadContacts(context) }
-                )
-            }
-
-            !viewModel.state.value.permissionGranted -> {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Button(onClick = {
-                        launcher.launch(Manifest.permission.READ_CONTACTS)
-                        launcher.launch(Manifest.permission.WRITE_CONTACTS)
-                    }) {
-                        Text(text = stringResource(R.string.contacts_permission))
+                        Text("Загрузка контактов...")
                     }
                 }
             }
 
+            uiState.permissionGranted -> {
+                when (uiState.navigationState) {
+                    is NavigationState.ContactsList -> {
+                        ContactsListScreen(viewModel, uiState)
+                    }
+                    is NavigationState.ContactDetails -> {
+                        ContactDetailsScreen(viewModel, uiState)
+                    }
+                    else -> ContactsListScreen(viewModel, uiState)
+                }
+            }
+
+            !uiState.permissionGranted -> {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Call,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Доступ к контактам",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Для работы приложения необходим доступ к вашим контактам",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Button(
+                        onClick = { launcher.launch(Manifest.permission.READ_CONTACTS) },
+                        modifier = Modifier.padding(horizontal = 32.dp)
+                    ) {
+                        Text("Предоставить доступ")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ContactsListScreen(
+    viewModel: MainScreenViewModel,
+    state: MainScreenState
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Top App Bar
+        TopAppBar(
+            title = { Text("Контакты") },
+            actions = {
+        IconButton(onClick = { /* Поиск уже реализован через SearchBar */ }) {
+            Icon(Icons.Default.Settings, contentDescription = "Settings")
+        }
+            }
+        )
+
+        // Search Bar
+        SearchBar(
+            query = state.searchQuery,
+            onQueryChange = { viewModel.updateSearchQuery(it) },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = 8.dp)
+        ) {
+            val groupedContacts = viewModel.getGroupedContactsList(state.contactsList)
+            
+            groupedContacts.forEach { (letter, contacts) ->
+                item {
+                    SectionHeader(letter = letter)
+                }
+
+                items(contacts) { contact ->
+                    EnhancedContactItem(
+                        contact = contact,
+                        onClick = { viewModel.selectContact(contact.id) }
+                    )
+                    HorizontalDivider()
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ContactDetailsScreen(
+    viewModel: MainScreenViewModel,
+    state: MainScreenState
+) {
+    var showBiometric by remember { mutableStateOf(false) }
+    var showAddReminder by remember { mutableStateOf(false) }
+    var showEditContact by remember { mutableStateOf(false) }
+    var showAddNote by remember { mutableStateOf(false) }
+    var showAddTag by remember { mutableStateOf(false) }
+    var showMoreOptions by remember { mutableStateOf(false) }
+    
+    val context = LocalContext.current
+    val repository = remember { com.example.contactsapp.data.repository.ContactsRepository(context) }
+    
+    // Получаем текущий контакт
+    val currentContact = state.contactsList.find { it.id == state.selectedContactId }
+    
+    // Реальные данные из базы
+    var extendedContact by remember { mutableStateOf<com.example.contactsapp.data.model.ExtendedContact?>(null) }
+    var tags by remember { mutableStateOf<List<String>>(emptyList()) }
+    var notes by remember { mutableStateOf("") }
+    var socialNetworks by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var reminders by remember { mutableStateOf<List<com.example.contactsapp.data.model.Reminder>>(emptyList()) }
+    var availableTags by remember { mutableStateOf<List<String>>(emptyList()) }
+    var reminderUpdateTrigger by remember { mutableStateOf(0) }
+    
+    LaunchedEffect(state.selectedContactId, reminderUpdateTrigger) {
+        state.selectedContactId?.let { contactId ->
+            // Загружаем ExtendedContact
+            extendedContact = viewModel.getExtendedContact(contactId)
+            extendedContact?.let { ec ->
+                notes = ec.notes ?: ""
+                socialNetworks = repository.parseSocialNetworks(ec.socialNetworks)
+                
+                // Загружаем теги
+                tags = viewModel.getTagsForContact(contactId)
+                
+                // Загружаем напоминания
+                reminders = viewModel.getRemindersForContact(contactId)
+                
+                // Проверяем, нужна ли биометрия
+                if (ec.isLocked) {
+                    showBiometric = true
+                }
+            }
+            
+            // Загружаем доступные теги
+            withContext(Dispatchers.IO) {
+                availableTags = repository.getAllTags().first().distinct()
+            }
+        }
+    }
+    
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Top App Bar with Back
+            TopAppBar(
+                title = { Text(text = currentContact?.name ?: "Детали контакта", overflow = TextOverflow.Clip) },
+                navigationIcon = {
+                    IconButton(onClick = { viewModel.navigateBack() }) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showAddReminder = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "Add Reminder")
+                    }
+                    IconButton(onClick = { showEditContact = true }) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit")
+                    }
+                    IconButton(onClick = { showMoreOptions = true }) {
+                        Icon(Icons.Default.MoreVert, contentDescription = "More")
+                    }
+                }
+            )
+
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                item {
+                    ContactHeaderCard(contact = currentContact)
+                }
+                
+                item {
+                    ContactActionsCard(contact = currentContact, extendedContact = extendedContact)
+                }
+                
+                item {
+                    ContactInfoSection(extendedContact = extendedContact)
+                }
+                
+                item {
+                    SocialMediaSection(socialNetworks = socialNetworks, context = context)
+                }
+                
+                item {
+                    TagsSection(
+                        tags = tags,
+                        onAddClick = { showAddTag = true },
+                        onRemoveTag = { tag ->
+                            state.selectedContactId?.let {
+                                viewModel.removeTag(it, tag)
+                                tags = tags - tag
+                            }
+                        }
+                    )
+                }
+                
+                item {
+                    NotesSection(note = notes, onEditClick = { showAddNote = true })
+                }
+                
+                item {
+                    RemindersSection(
+                        reminders = reminders,
+                        onDeleteReminder = { reminderId ->
+                            viewModel.deleteReminder(reminderId)
+                            // Триггерим обновление напоминаний
+                            reminderUpdateTrigger++
+                        }
+                    )
+                }
+            }
+        }
+        
+        // Биометрический диалог
+        if (showBiometric && currentContact != null) {
+            BiometricAuthDialog(
+                onAuthSuccess = { showBiometric = false },
+                onAuthFailure = {
+                    showBiometric = false
+                    viewModel.navigateBack()
+                },
+                contactName = currentContact.name
+            )
+        }
+        
+        // Диалог редактирования контакта
+        if (showEditContact && extendedContact != null) {
+            EditContactDialog(
+                contact = extendedContact,
+                onDismiss = { showEditContact = false },
+                onSave = { biography, notesText, socials ->
+                    viewModel.updateExtendedContact(
+                        contactId = state.selectedContactId!!,
+                        biography = biography,
+                        notes = notesText,
+                        socialNetworks = socials
+                    )
+                    socialNetworks = socials
+                    notes = notesText
+                    extendedContact = extendedContact?.copy(
+                        biography = biography,
+                        notes = notesText,
+                        socialNetworks = com.google.gson.Gson().toJson(socials)
+                    )
+                    showEditContact = false
+                }
+            )
+        }
+        
+        // Диалог добавления заметки
+        if (showAddNote && state.selectedContactId != null) {
+            AddNoteDialog(
+                initialNote = notes,
+                onDismiss = { showAddNote = false },
+                onSave = { note ->
+                    viewModel.updateExtendedContact(
+                        contactId = state.selectedContactId!!,
+                        notes = note
+                    )
+                    notes = note
+                    extendedContact = extendedContact?.copy(notes = note)
+                }
+            )
+        }
+        
+        // Диалог добавления тега
+        if (showAddTag && state.selectedContactId != null) {
+            AddTagDialog(
+                availableTags = availableTags.ifEmpty { listOf("Друзья", "Работа", "Семья", "Коллеги", "Важные") },
+                onDismiss = { showAddTag = false },
+                onAddTag = { tag ->
+                    viewModel.addTag(state.selectedContactId!!, tag)
+                    tags = tags + tag
+                }
+            )
+        }
+        
+        // Диалог добавления напоминания
+        if (showAddReminder && state.selectedContactId != null) {
+            AddReminderDialog(
+                onDismiss = { showAddReminder = false },
+                onConfirm = { title, description, type, days ->
+                    viewModel.createReminder(
+                        contactId = state.selectedContactId!!,
+                        type = type,
+                        title = title,
+                        description = description,
+                        daysFromNow = days
+                    )
+                    // Триггерим обновление напоминаний
+                    reminderUpdateTrigger++
+                }
+            )
+        }
+        
+        // Меню дополнительных опций
+        if (showMoreOptions && state.selectedContactId != null && extendedContact != null) {
+            AlertDialog(
+                onDismissRequest = { showMoreOptions = false },
+                title = { Text("Дополнительно") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = {
+                                viewModel.toggleContactLock(
+                                    state.selectedContactId!!,
+                                    !extendedContact!!.isLocked
+                                )
+                                extendedContact = extendedContact?.copy(isLocked = !extendedContact!!.isLocked)
+                                showMoreOptions = false
+                            }
+                        ) {
+                            Text(if (extendedContact!!.isLocked) "Разблокировать контакт" else "Заблокировать контакт")
+                        }
+                        TextButton(
+                            onClick = {
+                                // Экспорт контакта
+                                val contact = currentContact
+                                if (contact != null) {
+                                    val vCard = "BEGIN:VCARD\nVERSION:3.0\nFN:${contact.name}\n"
+                                    val sendIntent = android.content.Intent().apply {
+                                        action = android.content.Intent.ACTION_SEND
+                                        putExtra(android.content.Intent.EXTRA_TEXT, vCard)
+                                        type = "text/x-vcard"
+                                    }
+                                    val shareIntent = android.content.Intent.createChooser(sendIntent, "Экспортировать контакт")
+                                    context.startActivity(shareIntent)
+                                }
+                                showMoreOptions = false
+                            }
+                        ) {
+                            Text("Экспортировать контакт")
+                        }
+                        TextButton(
+                            onClick = {
+                                viewModel.deleteContact(state.selectedContactId!!)
+                                showMoreOptions = false
+                            }
+                        ) {
+                            Text("Удалить контакт", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { showMoreOptions = false }) {
+                        Text("Отмена")
+                    }
+                },
+                dismissButton = null
+            )
         }
     }
 }
 
 @Composable
-fun MainScreenContent(
-    state: MainScreenState,
-    onButtonClick: (context: Context) -> Unit,
-    getGroupedContacts: (contacts: List<Contact>) -> Map<Char, List<Contact>>,
-    loadContacts: (context: Context) -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .padding(8.dp)
-            .fillMaxSize()
+fun ContactHeaderCard(contact: Contact?) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        LazyColumn(
-            modifier = Modifier.weight(1f)
-        ) {
-            getGroupedContacts(state.contactsList).forEach { (letter, contacts) ->
-                item { HorizontalDivider(modifier = Modifier.fillMaxWidth()) }
-                item { Box(modifier = Modifier.padding(start = 16.dp)) { Text(text = letter.toString()) } }
-                item { HorizontalDivider(modifier = Modifier.fillMaxWidth()) }
-
-                items(contacts) { ContactItem(it) }
-            }
-
-        }
-        val context = LocalContext.current
-
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            when {
-                state.cleanupStatus == CleanedStatusModel.SUCCESS -> {
-                    Text(stringResource(R.string.deleted))
-                    loadContacts(context)
-                }
-
-                state.cleanupStatus == CleanedStatusModel.NO_DUPLICATES -> {
-                    Text(stringResource(R.string.not_duplicates))
-                }
-
-                state.cleanupStatus == CleanedStatusModel.ERROR -> Text(stringResource(R.string.not_deleted))
+            AsyncImage(
+                model = contact?.photoUri,
+                contentDescription = "Contact Photo",
+                modifier = Modifier
+                    .size(120.dp)
+                    .clip(CircleShape),
+                contentScale = ContentScale.Crop,
+                placeholder = null
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = contact?.name ?: "Неизвестный",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
+            if (contact?.phones?.isNotEmpty() == true) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = contact.phones.first(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
-        Button(
-            onClick = { onButtonClick(context) },
+    }
+}
+
+@Composable
+fun ContactActionsCard(contact: Contact?, extendedContact: com.example.contactsapp.data.model.ExtendedContact?) {
+    val context = LocalContext.current
+    
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            Text(text = stringResource(R.string.deduplicate_button))
+            ActionButton(
+                icon = Icons.Default.Call,
+                label = "Позвонить",
+                onClick = {
+                    contact?.phones?.firstOrNull()?.let { phone ->
+                        val intent = android.content.Intent(
+                            android.content.Intent.ACTION_CALL,
+                            android.net.Uri.parse("tel:$phone")
+                        )
+                        context.startActivity(intent)
+                    }
+                }
+            )
+            ActionButton(
+                icon = Icons.Default.MailOutline,
+                label = "SMS",
+                onClick = {
+                    contact?.phones?.firstOrNull()?.let { phone ->
+                        val intent = android.content.Intent(
+                            android.content.Intent.ACTION_VIEW,
+                            android.net.Uri.parse("sms:$phone")
+                        )
+                        context.startActivity(intent)
+                    }
+                }
+            )
+            ActionButton(
+                icon = Icons.Default.Email,
+                label = "Email",
+                onClick = {
+                    extendedContact?.let { ec ->
+                        val emailsJson = ec.emails
+                        if (!emailsJson.isNullOrBlank()) {
+                            try {
+                                val emails = com.google.gson.Gson().fromJson(
+                                    emailsJson,
+                                    Array<String>::class.java
+                                )
+                                if (emails.isNotEmpty()) {
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
+                                        data = android.net.Uri.parse("mailto:")
+                                        putExtra(android.content.Intent.EXTRA_EMAIL, arrayOf(emails[0]))
+                                    }
+                                    context.startActivity(intent)
+                                }
+                            } catch (e: Exception) {
+                                // Если нет email, открываем общий email клиент
+                                val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
+                                    data = android.net.Uri.parse("mailto:")
+                                }
+                                context.startActivity(intent)
+                            }
+                        } else {
+                            val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
+                                data = android.net.Uri.parse("mailto:")
+                            }
+                            context.startActivity(intent)
+                        }
+                    }
+                }
+            )
+            ActionButton(
+                icon = Icons.Default.Share,
+                label = "Share",
+                onClick = {
+                    val sendIntent = android.content.Intent().apply {
+                        action = android.content.Intent.ACTION_SEND
+                        putExtra(android.content.Intent.EXTRA_TEXT, contact?.name)
+                        type = "text/plain"
+                    }
+                    val shareIntent = android.content.Intent.createChooser(sendIntent, null)
+                    context.startActivity(shareIntent)
+                }
+            )
         }
     }
 }
 
 @Composable
-fun ContactItem(contact: Contact) {
-    Row(
-        modifier = Modifier.padding(16.dp),
-        verticalAlignment = Alignment.CenterVertically
+fun ActionButton(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clickable(onClick = onClick)
     ) {
-        Image(
-            modifier = Modifier.padding(end = 8.dp),
-            imageVector = Icons.Default.AccountCircle,
-            contentDescription = null,
-            alignment = Alignment.Center
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            modifier = Modifier.size(32.dp),
+            tint = MaterialTheme.colorScheme.primary
         )
-        Column {
-            Text(text = contact.name, style = MaterialTheme.typography.titleMedium)
-            contact.phones.forEach { phone ->
-                Text(text = phone, style = MaterialTheme.typography.bodyMedium)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall
+        )
+    }
+}
+
+@Composable
+fun ContactInfoSection(extendedContact: com.example.contactsapp.data.model.ExtendedContact?) {
+    val emails = remember(extendedContact?.emails) {
+        if (extendedContact?.emails.isNullOrBlank()) {
+            emptyList<String>()
+        } else {
+            try {
+                com.google.gson.Gson().fromJson(
+                    extendedContact?.emails,
+                    Array<String>::class.java
+                ).toList()
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+    }
+    
+    SectionCard(title = "Информация") {
+        if (emails.isNotEmpty()) {
+            emails.forEach { email ->
+                InfoRow(icon = Icons.Default.Email, label = "Email", value = email)
+            }
+        } else {
+            InfoRow(icon = Icons.Default.Email, label = "Email", value = "Не указан")
+        }
+        InfoRow(icon = Icons.Default.LocationOn, label = "Адрес", value = "Не указан")
+        extendedContact?.biography?.let { biography ->
+            if (biography.isNotEmpty()) {
+                HorizontalDivider()
+                Text(
+                    text = biography,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
             }
         }
     }
 }
 
-
-@Preview(showBackground = true)
 @Composable
-fun MainScreenPreview() {
-    MainScreen()
+fun SocialMediaSection(socialNetworks: Map<String, String>, context: Context) {
+    SectionCard(title = "Социальные сети") {
+        if (socialNetworks.isEmpty()) {
+            Text(
+                text = "Добавьте ссылки на соцсети",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            socialNetworks.forEach { (platform, url) ->
+                SocialMediaRow(platform = platform, username = url, context = context)
+            }
+        }
+    }
 }
+
+@Composable
+fun TagsSection(tags: List<String>, onAddClick: () -> Unit, onRemoveTag: (String) -> Unit) {
+    SectionCard(title = "Теги") {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            tags.forEach { tag ->
+                TagChip(
+                    label = tag,
+                    onRemove = { onRemoveTag(tag) }
+                )
+            }
+            TagChip(label = "+", onClick = onAddClick)
+        }
+    }
+}
+
+@Composable
+fun NotesSection(note: String, onEditClick: () -> Unit) {
+    SectionCard(title = "Заметки") {
+        Text(
+            text = if (note.isEmpty()) "Добавьте заметку о контакте..." else note,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (note.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.clickable(onClick = onEditClick)
+        )
+    }
+}
+
+@Composable
+fun RemindersSection(reminders: List<Reminder>, onDeleteReminder: (Long) -> Unit) {
+    val dateFormat = remember { SimpleDateFormat("dd MMMM yyyy", Locale("ru", "RU")) }
+    
+    SectionCard(title = "Напоминания") {
+        if (reminders.isEmpty()) {
+            Text(
+                text = "Напоминаний нет",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            reminders.forEachIndexed { index, reminder ->
+                if (index > 0) HorizontalDivider()
+                ReminderItem(
+                    icon = Icons.Default.Notifications,
+                    title = reminder.title,
+                    date = dateFormat.format(java.util.Date(reminder.scheduledDate)),
+                    onDelete = { onDeleteReminder(reminder.id) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ReminderItem(icon: ImageVector, title: String, date: String, onDelete: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(24.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = date,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        IconButton(onClick = onDelete) {
+            Icon(Icons.Default.Delete, contentDescription = "Delete")
+        }
+    }
+}
+
+@Composable
+fun SectionCard(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+        modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            content()
+        }
+    }
+}
+
+@Composable
+fun InfoRow(icon: ImageVector, label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+fun SocialMediaRow(platform: String, username: String, context: Context) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = platform,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = username,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary
+        )
+        IconButton(onClick = {
+            val url = if (username.startsWith("http://") || username.startsWith("https://")) {
+                username
+            } else if (username.startsWith("@")) {
+                // Попытка открыть через приложение соцсети
+                when (platform.lowercase()) {
+                    "telegram" -> "https://t.me/${username.substring(1)}"
+                    "instagram" -> "https://instagram.com/${username.substring(1)}"
+                    "facebook" -> "https://facebook.com/${username.substring(1)}"
+                    "twitter" -> "https://twitter.com/${username.substring(1)}"
+                    else -> username
+                }
+            } else {
+                username
+            }
+            try {
+                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                context.startActivity(intent)
+            } catch (e: Exception) {
+                // Если не удалось открыть, игнорируем
+            }
+        }) {
+            Icon(Icons.Default.Send, contentDescription = "Open")
+        }
+    }
+}
+
+@Composable
+fun TagChip(label: String, onClick: () -> Unit = {}, onRemove: (() -> Unit)? = null) {
+    if (label == "+") {
+        FilterChip(
+            selected = false,
+            onClick = onClick,
+            label = { Text(label) },
+            modifier = Modifier.padding(vertical = 4.dp)
+        )
+    } else {
+        AssistChip(
+            onClick = {},
+            label = { Text(label) },
+            trailingIcon = if (onRemove != null) {
+                {
+                    IconButton(
+                        onClick = onRemove,
+                        modifier = Modifier.size(18.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Удалить",
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                }
+            } else null,
+            modifier = Modifier.padding(vertical = 4.dp)
+        )
+    }
+}
+
+@Composable
+fun SectionHeader(letter: Char) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(vertical = 8.dp, horizontal = 16.dp)
+    ) {
+        Text(
+            text = letter.toString(),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary
+        )
+    }
+}
+
+@Composable
+fun EnhancedContactItem(
+    contact: Contact,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        // Contact Photo
+        AsyncImage(
+            model = contact.photoUri,
+            contentDescription = "Contact Photo",
+            modifier = Modifier
+                .size(56.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentScale = ContentScale.Crop,
+            placeholder = null
+        )
+        
+        Spacer(modifier = Modifier.width(16.dp))
+        
+        // Contact Info
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = contact.name,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (contact.phones.isNotEmpty()) {
+                Text(
+                    text = contact.phones.first(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        
+        IconButton(onClick = { /* Быстрые действия можно добавить через контекстное меню */ }) {
+            Icon(Icons.Default.MoreVert, contentDescription = "More")
+        }
+    }
+}
+

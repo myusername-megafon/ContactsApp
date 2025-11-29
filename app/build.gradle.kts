@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    kotlin("kapt")
 }
 
 android {
@@ -39,8 +40,13 @@ android {
     }
     buildFeatures {
         compose = true
-        aidl = true
         buildConfig = true
+        viewBinding = false
+        dataBinding = false
+    }
+
+    kapt {
+        correctErrorTypes = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.1"
@@ -64,6 +70,24 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    
+    // Room
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    kapt(libs.androidx.room.compiler)
+    
+    // Image loading
+    implementation(libs.coil.compose)
+    
+    // Biometric
+    implementation(libs.androidx.biometric)
+    
+    // Work Manager
+    implementation(libs.androidx.work.runtime.ktx)
+    
+    // JSON
+    implementation(libs.gson)
+    
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
