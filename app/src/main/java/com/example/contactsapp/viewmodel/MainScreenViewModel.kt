@@ -39,13 +39,41 @@ class MainScreenViewModel(private val context: Context) : ViewModel() {
                 val contacts = withContext(Dispatchers.IO) {
                     repository.loadSystemContacts(context)
                 }
-                
-                // Convert and save to database
-                val extendedContacts = contacts.map { repository.convertToExtendedContact(it) }
+
+                // Сохраняем/обновляем расширенные контакты, но не теряем уже сохранённые поля (в т.ч. isLocked)
                 withContext(Dispatchers.IO) {
+                    val existingExtended = repository.getAllExtendedContacts().first()
+                    val existingById = existingExtended.associateBy { it.contactId }
+
+                    val extendedContacts = contacts.map { contact ->
+                        val base = repository.convertToExtendedContact(contact)
+                        val existing = existingById[contact.id]
+
+                        if (existing != null) {
+                            base.copy(
+                                emails = existing.emails,
+                                birthday = existing.birthday,
+                                socialNetworks = existing.socialNetworks,
+                                tags = existing.tags,
+                                biography = existing.biography,
+                                notes = existing.notes,
+                                lastCallDate = existing.lastCallDate,
+                                lastMessageDate = existing.lastMessageDate,
+                                lastMeetingDate = existing.lastMeetingDate,
+                                reminderToCall = existing.reminderToCall,
+                                reminderToCongratulate = existing.reminderToCongratulate,
+                                reminderReason = existing.reminderReason,
+                                isLocked = existing.isLocked,
+                                dateAdded = existing.dateAdded
+                            )
+                        } else {
+                            base
+                        }
+                    }
+
                     repository.saveExtendedContacts(extendedContacts)
                 }
-                
+
                 _state.value = _state.value.copy(
                     contactsList = contacts,
                     isLoading = false

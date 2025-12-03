@@ -21,6 +21,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,6 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -46,7 +48,10 @@ import com.example.contactsapp.data.model.ReminderType
 import com.example.contactsapp.data.model.Reminder
 import java.text.SimpleDateFormat
 import java.util.Locale
+import androidx.fragment.app.FragmentActivity
+import com.example.contactsapp.utils.BiometricHelper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
 
@@ -192,14 +197,20 @@ fun ContactDetailsScreen(
     viewModel: MainScreenViewModel,
     state: MainScreenState
 ) {
-    var showBiometric by remember { mutableStateOf(false) }
     var showAddReminder by remember { mutableStateOf(false) }
     var showEditContact by remember { mutableStateOf(false) }
     var showAddNote by remember { mutableStateOf(false) }
     var showAddTag by remember { mutableStateOf(false) }
     var showMoreOptions by remember { mutableStateOf(false) }
+    var isContactUnlocked by remember { mutableStateOf(false) }
+    var shouldAutoPrompt by remember { mutableStateOf(true) }
+    var biometricError by remember { mutableStateOf<String?>(null) }
+    var isBiometricInProgress by remember { mutableStateOf(false) }
     
     val context = LocalContext.current
+    val activity = context as? FragmentActivity
+    val coroutineScope = rememberCoroutineScope()
+    val biometricHelper = remember { BiometricHelper() }
     val repository = remember { com.example.contactsapp.data.repository.ContactsRepository(context) }
     
     // Получаем текущий контакт
@@ -230,7 +241,11 @@ fun ContactDetailsScreen(
                 
                 // Проверяем, нужна ли биометрия
                 if (ec.isLocked) {
-                    showBiometric = true
+                    isContactUnlocked = false
+                    shouldAutoPrompt = true
+                } else {
+                    isContactUnlocked = true
+                    shouldAutoPrompt = false
                 }
             }
             
@@ -241,6 +256,53 @@ fun ContactDetailsScreen(
         }
     }
     
+    suspend fun launchBiometricPrompt(): Boolean {
+        if (activity == null) {
+            biometricError = "Биометрия недоступна в этом режиме"
+            return false
+        }
+        if (!biometricHelper.isBiometricAvailable(activity)) {
+            biometricError = "Настройте отпечаток или PIN-код в настройках устройства"
+            return false
+        }
+        isBiometricInProgress = true
+        return try {
+            val success = biometricHelper.authenticate(
+                activity = activity,
+                title = "Разблокируйте контакт",
+                subtitle = currentContact?.name?.let { "Доступ к контакту $it" } ?: "Подтвердите личность"
+            )
+            if (success) {
+                biometricError = null
+                isContactUnlocked = true
+            } else {
+                biometricError = "Аутентификация отменена или не выполнена"
+            }
+            success
+        } finally {
+            isBiometricInProgress = false
+        }
+    }
+
+    LaunchedEffect(state.selectedContactId) {
+        isContactUnlocked = false
+        shouldAutoPrompt = true
+        biometricError = null
+        isBiometricInProgress = false
+    }
+
+    LaunchedEffect(extendedContact?.isLocked, shouldAutoPrompt) {
+        if (extendedContact?.isLocked == true && shouldAutoPrompt) {
+            shouldAutoPrompt = false
+            launchBiometricPrompt()
+        } else if (extendedContact?.isLocked == false && extendedContact != null) {
+            isContactUnlocked = true
+            biometricError = null
+        }
+    }
+
+    val shouldHideDetails = extendedContact?.isLocked == true && !isContactUnlocked
+
     Box(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
             // Top App Bar with Back
@@ -252,79 +314,140 @@ fun ContactDetailsScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { showAddReminder = true }) {
+                    // Добавить напоминание
+                    IconButton(onClick = { showAddReminder = true }, enabled = !shouldHideDetails) {
                         Icon(Icons.Default.Add, contentDescription = "Add Reminder")
                     }
-                    IconButton(onClick = { showEditContact = true }) {
+                    // Редактирование
+                    IconButton(onClick = { showEditContact = true }, enabled = !shouldHideDetails) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit")
                     }
+                    // Замок (скрытые контакты)
+                    IconButton(
+                        onClick = {
+                            extendedContact?.let { ec ->
+                                val currentlyLocked = ec.isLocked
+                                if (!currentlyLocked) {
+                                    // Включаем режим скрытого контакта
+                                    val newLockState = true
+                                    viewModel.toggleContactLock(ec.contactId, newLockState)
+                                    extendedContact = ec.copy(isLocked = newLockState)
+                                    isContactUnlocked = false
+                                    shouldAutoPrompt = false
+                                    biometricError = null
+                                } else {
+                                    // Уже скрытый контакт
+                                    if (!isContactUnlocked) {
+                                        // Сначала попросим биометрию
+                                        coroutineScope.launch {
+                                            launchBiometricPrompt()
+                                        }
+                                    } else {
+                                        // Контакт уже разблокирован в этой сессии — можем убрать из скрытых
+                                        val newLockState = false
+                                        viewModel.toggleContactLock(ec.contactId, newLockState)
+                                        extendedContact = ec.copy(isLocked = newLockState)
+                                        isContactUnlocked = true
+                                        shouldAutoPrompt = false
+                                        biometricError = null
+                                    }
+                                }
+                            }
+                        }
+                    ) {
+                        val locked = extendedContact?.isLocked == true
+                        if (locked)
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Скрытый контакт"
+                        )
+                        else Icon(
+                            painter = painterResource(R.drawable.open),
+                            contentDescription = "Обычный контакт"
+                        )
+                    }
+                    // Прочие действия
                     IconButton(onClick = { showMoreOptions = true }) {
                         Icon(Icons.Default.MoreVert, contentDescription = "More")
                     }
                 }
             )
 
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                item {
-                    ContactHeaderCard(contact = currentContact)
-                }
-                
-                item {
-                    ContactActionsCard(contact = currentContact, extendedContact = extendedContact)
-                }
-                
-                item {
-                    ContactInfoSection(extendedContact = extendedContact)
-                }
-                
-                item {
-                    SocialMediaSection(socialNetworks = socialNetworks, context = context)
-                }
-                
-                item {
-                    TagsSection(
-                        tags = tags,
-                        onAddClick = { showAddTag = true },
-                        onRemoveTag = { tag ->
-                            state.selectedContactId?.let {
-                                viewModel.removeTag(it, tag)
-                                tags = tags - tag
+            when {
+                shouldHideDetails -> {
+                    LockedContactPlaceholder(
+                        contactName = currentContact?.name ?: "контакту",
+                        isLoading = isBiometricInProgress,
+                        errorMessage = biometricError,
+                        onUnlockClick = {
+                            coroutineScope.launch {
+                                launchBiometricPrompt()
                             }
                         }
                     )
                 }
-                
-                item {
-                    NotesSection(note = notes, onEditClick = { showAddNote = true })
+                extendedContact == null && currentContact != null -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator()
+                    }
                 }
-                
-                item {
-                    RemindersSection(
-                        reminders = reminders,
-                        onDeleteReminder = { reminderId ->
-                            viewModel.deleteReminder(reminderId)
-                            // Триггерим обновление напоминаний
-                            reminderUpdateTrigger++
+                else -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        item {
+                            ContactHeaderCard(contact = currentContact)
                         }
-                    )
+                        
+                        item {
+                            ContactActionsCard(contact = currentContact, extendedContact = extendedContact)
+                        }
+                        
+                        item {
+                            ContactInfoSection(extendedContact = extendedContact)
+                        }
+                        
+                        item {
+                            SocialMediaSection(socialNetworks = socialNetworks, context = context)
+                        }
+                        
+                        item {
+                            TagsSection(
+                                tags = tags,
+                                onAddClick = { showAddTag = true },
+                                onRemoveTag = { tag ->
+                                    state.selectedContactId?.let {
+                                        viewModel.removeTag(it, tag)
+                                        tags = tags - tag
+                                    }
+                                }
+                            )
+                        }
+                        
+                        item {
+                            NotesSection(note = notes, onEditClick = { showAddNote = true })
+                        }
+                        
+                        item {
+                            RemindersSection(
+                                reminders = reminders,
+                                onDeleteReminder = { reminderId ->
+                                    viewModel.deleteReminder(reminderId)
+                                    // Триггерим обновление напоминаний
+                                    reminderUpdateTrigger++
+                                }
+                            )
+                        }
+                    }
                 }
             }
-        }
-        
-        // Биометрический диалог
-        if (showBiometric && currentContact != null) {
-            BiometricAuthDialog(
-                onAuthSuccess = { showBiometric = false },
-                onAuthFailure = {
-                    showBiometric = false
-                    viewModel.navigateBack()
-                },
-                contactName = currentContact.name
-            )
         }
         
         // Диалог редактирования контакта
@@ -410,7 +533,17 @@ fun ContactDetailsScreen(
                                     state.selectedContactId!!,
                                     !extendedContact!!.isLocked
                                 )
-                                extendedContact = extendedContact?.copy(isLocked = !extendedContact!!.isLocked)
+                                val newLockState = !extendedContact!!.isLocked
+                                extendedContact = extendedContact?.copy(isLocked = newLockState)
+                                if (newLockState) {
+                                    isContactUnlocked = false
+                                    shouldAutoPrompt = true
+                                    biometricError = null
+                                } else {
+                                    isContactUnlocked = true
+                                    shouldAutoPrompt = false
+                                    biometricError = null
+                                }
                                 showMoreOptions = false
                             }
                         ) {
@@ -452,6 +585,65 @@ fun ContactDetailsScreen(
                 },
                 dismissButton = null
             )
+        }
+    }
+}
+
+@Composable
+fun LockedContactPlaceholder(
+    contactName: String,
+    isLoading: Boolean,
+    errorMessage: String?,
+    onUnlockClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            imageVector = Icons.Default.Lock,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(64.dp)
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(
+            text = "Контакт защищен",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "Для просмотра данных требуется подтвердить доступ к $contactName.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (!errorMessage.isNullOrEmpty()) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                text = errorMessage,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
+        }
+        Spacer(modifier = Modifier.height(24.dp))
+        Button(
+            onClick = onUnlockClick,
+            enabled = !isLoading
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text("Проверка...")
+            } else {
+                Text("Разблокировать")
+            }
         }
     }
 }
@@ -931,13 +1123,28 @@ fun EnhancedContactItem(
         
         // Contact Info
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = contact.name,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = contact.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+
+                if (extendedContact?.isLocked == true) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = "Скрытый контакт",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
             if (contact.phones.isNotEmpty()) {
                 Text(
                     text = contact.phones.first(),
