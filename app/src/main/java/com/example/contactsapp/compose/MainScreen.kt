@@ -135,14 +135,23 @@ fun ContactsListScreen(
     viewModel: MainScreenViewModel,
     state: MainScreenState
 ) {
+    val context = LocalContext.current
+
     Column(modifier = Modifier.fillMaxSize()) {
         // Top App Bar
         TopAppBar(
             title = { Text("Контакты") },
             actions = {
-        IconButton(onClick = { /* Поиск уже реализован через SearchBar */ }) {
-            Icon(Icons.Default.Settings, contentDescription = "Settings")
-        }
+                IconButton(
+                    onClick = {
+                        // Обработчик нажатия на шестерёнку
+                        android.widget.Toast
+                            .makeText(context, "Настройки в разработке", android.widget.Toast.LENGTH_SHORT)
+                            .show()
+                    }
+                ) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings")
+                }
             }
         )
 
@@ -167,7 +176,8 @@ fun ContactsListScreen(
                 items(contacts) { contact ->
                     EnhancedContactItem(
                         contact = contact,
-                        onClick = { viewModel.selectContact(contact.id) }
+                        onClick = { viewModel.selectContact(contact.id) },
+                        viewModel = viewModel
                     )
                     HorizontalDivider()
                 }
@@ -529,8 +539,8 @@ fun ContactActionsCard(contact: Contact?, extendedContact: com.example.contactsa
                 icon = Icons.Default.Email,
                 label = "Email",
                 onClick = {
-                    extendedContact?.let { ec ->
-                        val emailsJson = ec.emails
+                    if (extendedContact != null) {
+                        val emailsJson = extendedContact.emails
                         if (!emailsJson.isNullOrBlank()) {
                             try {
                                 val emails = com.google.gson.Gson().fromJson(
@@ -543,21 +553,19 @@ fun ContactActionsCard(contact: Contact?, extendedContact: com.example.contactsa
                                         putExtra(android.content.Intent.EXTRA_EMAIL, arrayOf(emails[0]))
                                     }
                                     context.startActivity(intent)
+                                    return@ActionButton
                                 }
-                            } catch (e: Exception) {
-                                // Если нет email, открываем общий email клиент
-                                val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
-                                    data = android.net.Uri.parse("mailto:")
-                                }
-                                context.startActivity(intent)
+                            } catch (_: Exception) {
+                                // Игнорируем и падаем в общий обработчик ниже
                             }
-                        } else {
-                            val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
-                                data = android.net.Uri.parse("mailto:")
-                            }
-                            context.startActivity(intent)
                         }
                     }
+
+                    // Если нет расширенного контакта или email'ов — просто открываем почтовый клиент
+                    val intent = android.content.Intent(android.content.Intent.ACTION_SENDTO).apply {
+                        data = android.net.Uri.parse("mailto:")
+                    }
+                    context.startActivity(intent)
                 }
             )
             ActionButton(
@@ -889,8 +897,17 @@ fun SectionHeader(letter: Char) {
 @Composable
 fun EnhancedContactItem(
     contact: Contact,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    viewModel: MainScreenViewModel
 ) {
+    val context = LocalContext.current
+    var showMenu by remember { mutableStateOf(false) }
+    var extendedContact by remember { mutableStateOf<com.example.contactsapp.data.model.ExtendedContact?>(null) }
+
+    LaunchedEffect(contact.id) {
+        extendedContact = viewModel.getExtendedContact(contact.id)
+    }
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -931,9 +948,61 @@ fun EnhancedContactItem(
                 )
             }
         }
-        
-        IconButton(onClick = { /* Быстрые действия можно добавить через контекстное меню */ }) {
-            Icon(Icons.Default.MoreVert, contentDescription = "More")
+
+        Box {
+            IconButton(onClick = { showMenu = true }) {
+                Icon(Icons.Default.MoreVert, contentDescription = "More")
+            }
+
+            DropdownMenu(
+                expanded = showMenu,
+                onDismissRequest = { showMenu = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Открыть") },
+                    onClick = {
+                        showMenu = false
+                        onClick()
+                    }
+                )
+
+                if (extendedContact != null) {
+                    val isLocked = extendedContact?.isLocked == true
+                    DropdownMenuItem(
+                        text = { Text(if (isLocked) "Разблокировать контакт" else "Заблокировать контакт") },
+                        onClick = {
+                            extendedContact?.let { ec ->
+                                viewModel.toggleContactLock(contact.id, !ec.isLocked)
+                                extendedContact = ec.copy(isLocked = !ec.isLocked)
+                            }
+                            showMenu = false
+                        }
+                    )
+                }
+
+                DropdownMenuItem(
+                    text = { Text("Экспортировать контакт") },
+                    onClick = {
+                        val vCard = "BEGIN:VCARD\nVERSION:3.0\nFN:${contact.name}\n"
+                        val sendIntent = android.content.Intent().apply {
+                            action = android.content.Intent.ACTION_SEND
+                            putExtra(android.content.Intent.EXTRA_TEXT, vCard)
+                            type = "text/x-vcard"
+                        }
+                        val shareIntent = android.content.Intent.createChooser(sendIntent, "Экспортировать контакт")
+                        context.startActivity(shareIntent)
+                        showMenu = false
+                    }
+                )
+
+                DropdownMenuItem(
+                    text = { Text("Удалить контакт", color = MaterialTheme.colorScheme.error) },
+                    onClick = {
+                        viewModel.deleteContact(contact.id)
+                        showMenu = false
+                    }
+                )
+            }
         }
     }
 }
